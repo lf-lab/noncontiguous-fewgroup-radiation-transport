@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Non-contiguous few-group radiation transport - how to run</title>
+<style>
+  body { font-family: -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; line-height: 1.55;
+         max-width: 920px; margin: 2em auto; padding: 0 1.2em; color: #1f2328; }
+  h1 { font-size: 1.7em; border-bottom: 1px solid #d0d7de; padding-bottom: .3em; }
+  h2 { font-size: 1.3em; border-bottom: 1px solid #d0d7de; padding-bottom: .25em; margin-top: 2em; }
+  h3 { font-size: 1.08em; margin-top: 1.6em; }
+  code { background: #f1f3f5; padding: .1em .35em; border-radius: 4px; font-size: .92em; }
+  pre { background: #f6f8fa; border: 1px solid #d0d7de; border-radius: 6px; padding: .8em 1em; overflow-x: auto; }
+  pre code { background: none; padding: 0; }
+  table { border-collapse: collapse; margin: 1em 0; }
+  th, td { border: 1px solid #d0d7de; padding: .4em .7em; text-align: left; vertical-align: top; }
+  th { background: #f6f8fa; }
+  img { max-width: 100%; border: 1px solid #d0d7de; border-radius: 6px; margin: .5em 0; }
+  .note { background: #fff8c5; border: 1px solid #d4a72c; border-radius: 6px; padding: .7em 1em; }
+  @media (prefers-color-scheme: dark) {
+    body { background: #0d1117; color: #e6edf3; }
+    h1, h2 { border-color: #30363d; }
+    code, pre, th { background: #161b22; }
+    pre, th, td, img { border-color: #30363d; }
+    .note { background: #3a2f00; border-color: #9e6a03; }
+    img { background: #fff; }
+  }
+</style>
+</head>
+<body>
+
+<h1>Non-contiguous few-group radiation transport: demonstration code</h1>
+
+<p>This package builds a <b>K-group opacity table (default K = 150)</b> from a
+<b>1500-group table</b> by the non-contiguous generalized-group method, and tests it
+with one-dimensional multigroup diffusion in an isothermally expanding plasma.</p>
+
+<p class="note"><b>The opacity table in this package is a dummy.</b>
+The tin opacity table used in the paper cannot be distributed.
+<code>step1_make_dummy_opacity.py</code> generates a table for a fictitious element "X"
+from random numbers. Its values have no physical meaning. The errors and speed-up
+obtained with it are therefore different from the numbers in the paper.</p>
+
+<h2>1. Requirements</h2>
+<ul>
+  <li>Python 3.9 or later</li>
+  <li><code>numpy</code>, <code>scipy</code>, <code>matplotlib</code></li>
+</ul>
+<pre><code>pip install -r requirements.txt</code></pre>
+<p>About 1 GB of memory and 150 MB of disk space are needed. No GPU and no compiler are needed.</p>
+
+<h2>2. Quick start</h2>
+<p>Run the three steps in this order, in the folder that contains the scripts.</p>
+<pre><code>python3 step1_make_dummy_opacity.py       # ~2 s    dummy 1500-group table
+python3 step2_build_fewgroup_table.py     # ~30 s   training runs + 150-group table
+python3 step3_test_fewgroup_table.py      # ~20 s   test on unseen cases + figures</code></pre>
+<p>The times are for one core of a laptop-class CPU with the default settings.</p>
+
+<h2>3. Files</h2>
+<table>
+<tr><th>File</th><th>Role</th></tr>
+<tr><td><code>step1_make_dummy_opacity.py</code></td>
+    <td>Makes the fictitious 1500-group opacity / emissivity table.</td></tr>
+<tr><td><code>step2_build_fewgroup_table.py</code></td>
+    <td>Solves the training cases with 1500 groups, finds the generalized groups, and writes the K-group table.</td></tr>
+<tr><td><code>step3_test_fewgroup_table.py</code></td>
+    <td>Compares the K-group table with the 1500-group calculation on cases that were not used for training.</td></tr>
+<tr><td><code>mg_diffusion.py</code></td>
+    <td>Library and command-line tool: fine-group flux-limited diffusion solver, isothermal expansion profile, table interpolation.</td></tr>
+<tr><td><code>fewgroup.py</code></td>
+    <td>Library: partition into generalized groups, projection of the table, and the K-group model (<code>FewGroupModel</code>).</td></tr>
+</table>
+
+<h2>4. Step by step</h2>
+
+<h3>Step 1: dummy 1500-group table</h3>
+<pre><code>python3 step1_make_dummy_opacity.py [--seed 0] [--groups 1500] [--out dummy_opacity_1500g.npz]</code></pre>
+<p>Output: <code>dummy_opacity_1500g.npz</code> (86 MB) and <code>fig1_dummy_opacity.png</code>.</p>
+<table>
+<tr><th>Key</th><th>Shape</th><th>Content</th></tr>
+<tr><td><code>E, dE, E_edges</code></td><td>(1500), (1500), (1501)</td><td>photon-energy mesh [eV], logarithmic, 1 eV to 2 keV</td></tr>
+<tr><td><code>Te</code></td><td>(44)</td><td>electron temperature grid [eV], 1 to 300 eV, uniform in log</td></tr>
+<tr><td><code>Ni</code></td><td>(81)</td><td>ion density grid [cm<sup>-3</sup>], 10<sup>15</sup> to 10<sup>23</sup>, uniform in log</td></tr>
+<tr><td><code>Zbar</code></td><td>(44, 81)</td><td>mean charge</td></tr>
+<tr><td><code>opac</code></td><td>(44, 81, 1500)</td><td>absorption coefficient &kappa; [1/cm]</td></tr>
+<tr><td><code>emis</code></td><td>(44, 81, 1500)</td><td>emissivity &epsilon; [erg/cm<sup>3</sup>/s/eV], integrated over 4&pi;</td></tr>
+<tr><td><code>A, Z_nuc</code></td><td>scalar</td><td>mass number and atomic number of the fictitious element</td></tr>
+</table>
+<p>The dummy model imitates the structure of mid- and high-Z plasmas such as tin and gold.
+Every charge state has five unresolved transition arrays (UTAs), each a dense bundle of random lines.
+Two arrays stay in almost the same band for many charge states; three arrays move quickly with the charge state.
+The arrays are defined in <code>UTA_ARRAYS</code> at the top of the script and can be edited.
+The model also has a smooth continuum, a mean charge that depends on (T<sub>e</sub>, n<sub>i</sub>),
+and an emissivity below the Planck limit at low density.</p>
+<img src="fig1_dummy_opacity.png" alt="Dummy opacity table">
+
+<h3>Step 2: build the 150-group table</h3>
+<pre><code>python3 step2_build_fewgroup_table.py [--K 150] [--table dummy_opacity_1500g.npz]
+        [--Te 10 100 5] [--lambda_L 1 11 2] [--t_L 5 50 5] [--train_frac 0.05] [--seed 0]</code></pre>
+<p>What the script does:</p>
+<ol>
+  <li>It makes a grid of cases (T<sub>e</sub> [eV], laser wavelength &lambda;<sub>L</sub> [&micro;m], pulse duration t<sub>L</sub> [ns]);
+      each option is <code>MIN MAX STEP</code>. The default grid has 19 &times; 6 &times; 10 = 1140 cases.</li>
+  <li>It chooses 5 % of the cases at random (57 cases) and solves them with 1500 groups.
+      The normalized spectra inside the plasma are the training data.</li>
+  <li>It divides the 1500 fine groups into K generalized groups. A generalized group does not have to be
+      a contiguous band of photon energy. Each group has one fixed spectral shape w<sub>k</sub>.</li>
+  <li>It projects the fine table onto these groups and writes the K-group table.</li>
+</ol>
+<p>Output:</p>
+<table>
+<tr><th>File</th><th>Content</th></tr>
+<tr><td><code>fewgroup_table_K150.npz</code></td><td>proposed non-contiguous 150-group table (15 MB)</td></tr>
+<tr><td><code>conventional_table_K150.npz</code></td><td>conventional 150-group table (contiguous bands, flat shape) for comparison</td></tr>
+<tr><td><code>fig2_generalized_groups.png</code></td><td>which fine group belongs to which generalized group</td></tr>
+</table>
+<p>Main keys of the K-group table:</p>
+<table>
+<tr><th>Key</th><th>Shape</th><th>Content</th></tr>
+<tr><td><code>label</code></td><td>(1500)</td><td>index k of the generalized group of each fine group</td></tr>
+<tr><td><code>modes</code></td><td>(K, 1500)</td><td>shape w<sub>k</sub>(g); zero outside the group; &Sigma; w<sub>k</sub><sup>2</sup> &Delta;E = 1</td></tr>
+<tr><td><code>lkab</code></td><td>(44, 81, K)</td><td>log<sub>10</sub> of &kappa;&#772;<sub>k</sub> = &Sigma; w<sub>k</sub><sup>2</sup> &kappa;<sub>g</sub> &Delta;E<sub>g</sub> (absorption) [1/cm]</td></tr>
+<tr><td><code>leps</code></td><td>(44, 81, K)</td><td>log<sub>10</sub> of &epsilon;&#772;<sub>k</sub> = &Sigma; w<sub>k</sub> &epsilon;<sub>g</sub> &Delta;E<sub>g</sub> (emission)</td></tr>
+<tr><td><code>lkD</code></td><td>(44, 81, K)</td><td>log<sub>10</sub> of &kappa;<sub>D,k</sub> = 1 / &Sigma; (w<sub>k</sub><sup>2</sup> &Delta;E<sub>g</sub> / &kappa;<sub>g</sub>) (diffusion) [1/cm]</td></tr>
+<tr><td><code>lTe, lNi, Zbar, A</code></td><td></td><td>log<sub>10</sub> grids, mean charge and mass number (copied from the fine table)</td></tr>
+<tr><td><code>train_cases, grid, n_i, seed</code></td><td></td><td>record of the training conditions</td></tr>
+</table>
+<img src="fig2_generalized_groups.png" alt="Generalized groups">
+
+<h3>Step 3: test</h3>
+<pre><code>python3 step3_test_fewgroup_table.py [--K 150] [--n_test 20] [--seed 1]
+python3 step3_test_fewgroup_table.py --case 10.6 30 10     # one case: lambda_L [um], T_e [eV], t_L [ns]</code></pre>
+<p>The script takes 20 random cases that were not used for training and compares three calculations of the
+spectrum of the outgoing flux: 1500 groups (reference), the non-contiguous K-group table, and the conventional K-group table.</p>
+<table>
+<tr><th>File</th><th>Content</th></tr>
+<tr><td><code>test_results.csv</code></td><td>errors and wall time of every test case</td></tr>
+<tr><td><code>fig3_spectra.png</code></td><td>spectra of the best, median and worst test case</td></tr>
+<tr><td><code>fig4_errors.png</code></td><td>error distributions and computing time</td></tr>
+</table>
+<p>Error measures: <code>relL2</code> is the relative L2 error of the spectrum on the fine mesh;
+<code>total</code> is the relative error of the spectrally integrated flux.</p>
+<p>Example result with the default settings and the dummy table (20 test cases):</p>
+<table>
+<tr><th></th><th>relL2 median</th><th>relL2 90th pct.</th><th>total median</th><th>total 90th pct.</th><th>time / case</th></tr>
+<tr><td>non-contiguous, K = 150</td><td>6.1 %</td><td>9.4 %</td><td>1.6 %</td><td>2.2 %</td><td>0.03 s</td></tr>
+<tr><td>conventional, K = 150</td><td>28 %</td><td>73 %</td><td>20 %</td><td>129 %</td><td>0.02 s</td></tr>
+<tr><td>fine, 1500 groups</td><td>-</td><td>-</td><td>-</td><td>-</td><td>1 - 2 s</td></tr>
+</table>
+<p>The time of the fine-group calculation includes the interpolation of the 1500-group table.
+The numbers depend on the computer, on the random seeds and on the dummy table.</p>
+<img src="fig3_spectra.png" alt="Spectra">
+<img src="fig4_errors.png" alt="Errors and computing time">
+
+<h2>5. Use from Python</h2>
+<pre><code>import mg_diffusion as M
+from fewgroup import FewGroupModel
+
+# K-group calculation: needs only the K-group table
+model = FewGroupModel('fewgroup_table_K150.npz')
+out = model.run(lambda_L=10.6, n_i=4e22, T_e=30.0, t_L=10.0)
+E   = out['E_eV']     # fine photon-energy mesh [eV]
+F_E = out['F_E']      # outgoing flux spectrum [erg/cm^2/s/eV], reconstructed on the fine mesh
+F_k = out['F_k']      # outgoing flux amplitude of each generalized group
+
+# fine-group reference
+ref = M.run(10.6, 4e22, 30.0, 10.0, 'dummy_opacity_1500g.npz', verbose=False)
+print(M.spectrum_errors(ref['F_E'], F_E, model.dE))    # (relL2, total)</code></pre>
+<p>A single fine-group case can also be run from the command line:</p>
+<pre><code>python3 mg_diffusion.py --lambda_L 10.6 --T_e 30 --t_L 10    # writes spectrum_fine.txt / .png</code></pre>
+
+<h2>6. Model</h2>
+<p><b>Plasma.</b> Isothermal expansion in a slab: n<sub>i</sub>(x) = n<sub>ic</sub> exp(&minus;x/L), L = c<sub>s</sub> t<sub>L</sub>,
+c<sub>s</sub> = (&lang;Z&rang; T<sub>e</sub> / m<sub>i</sub>)<sup>1/2</sup>. The position x = 0 is the critical surface,
+&lang;Z&rang; n<sub>ic</sub> = n<sub>c</sub> = 1.1 &times; 10<sup>21</sup> / &lambda;<sub>L</sub><sup>2</sup> cm<sup>-3</sup> (&lambda;<sub>L</sub> in &micro;m).
+The domain is 0 &le; x &le; 500 &micro;m with 1 &micro;m cells.</p>
+<p><b>Fine-group transport.</b> For each group g:
+&minus;d/dx[D<sub>g</sub> dE<sub>g</sub>/dx] + c &kappa;<sub>g</sub> E<sub>g</sub> = &epsilon;<sub>g</sub>,
+D<sub>g</sub> = c &lambda;(R)/&kappa;<sub>g</sub>, R = |dE<sub>g</sub>/dx| / (&kappa;<sub>g</sub> E<sub>g</sub>).
+The default flux limiter is Larsen's (n = 2). Both boundaries are Marshak vacuum boundaries.
+The equations are solved by the Thomas algorithm (vectorized over the groups) with Picard iteration.</p>
+<p><b>Generalized groups.</b> The spectral energy density is written as
+u<sub>g</sub>(x) &asymp; a<sub>k</sub>(x) w<sub>k</sub>(g) for g in the group S<sub>k</sub>.
+Because the groups S<sub>k</sub> do not overlap, the projected equations are K independent diffusion equations
+with the coefficients &kappa;&#772;<sub>k</sub>, &epsilon;&#772;<sub>k</sub> and &kappa;<sub>D,k</sub> given in Step 2.
+The same solver is used for the fine groups and for the generalized groups.
+The groups and shapes are found from the Gram matrix of the training spectra by weighted kernel k-means
+followed by a rank-one refinement (see <code>fewgroup.py</code>).</p>
+
+<h2>7. Notes</h2>
+<ul>
+  <li><b>Use your own table.</b> Write your fine-group table as an <code>.npz</code> file with the keys of Step 1
+      and give it with <code>--table</code>. The T<sub>e</sub> and n<sub>i</sub> grids must be uniform in log.
+      &kappa; must be positive (values below 10<sup>-5</sup> cm<sup>-1</sup> are raised to this floor).</li>
+  <li><b>Training conditions matter.</b> The table is accurate for conditions similar to the training cases.
+      Train with full solutions that are close to your application.</li>
+  <li><b>Reproducibility.</b> The partition depends on <code>--seed</code>. The same seed gives the same table.</li>
+  <li><b>Generated files.</b> The <code>.npz</code> tables are large and can be regenerated, so they are listed in <code>.gitignore</code>.</li>
+</ul>
+
+</body>
+</html>
